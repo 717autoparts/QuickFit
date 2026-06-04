@@ -70,8 +70,8 @@ export default function DashboardTab() {
 
   async function applyDonor(listing, donorUrl) {
     const cfg = getEbayConfig();
-    if (!cfg.token) { setRowStatus(s => ({...s, [listing.id]: { msg: 'No eBay token', type: 'error' }})); return; }
-    if (!listing.ebay_item_id) { setRowStatus(s => ({...s, [listing.id]: { msg: 'No eBay item ID', type: 'error' }})); return; }
+    if (!cfg.token) { setRowStatus(s => ({...s, [listing.id]: { msg: 'No eBay token — go to Config', type: 'error' }})); return; }
+    if (!listing.ebay_item_id) { setRowStatus(s => ({...s, [listing.id]: { msg: 'No eBay item ID on this listing', type: 'error' }})); return; }
 
     setRowStatus(s => ({...s, [listing.id]: { msg: 'Fetching donor...', type: 'info' }}));
     try {
@@ -109,18 +109,14 @@ export default function DashboardTab() {
       }
 
       await sb.from('listings').update({ has_fitment: true, applied_profile_id: profileId, applied_at: new Date().toISOString() }).eq('id', listing.id);
-      await sb.from('fitment_log').insert({ listing_id: listing.id, profile_id: profileId, action: 'applied', vehicle_count: donorData.compatibilities.length, applied_by: 'manual' });
+      await sb.from('fitment_log').insert({ listing_id: listing.id, profile_id: profileId, action: listing.has_fitment ? 'applied' : 'applied', vehicle_count: donorData.compatibilities.length, applied_by: 'manual' });
 
-      setRowStatus(s => ({...s, [listing.id]: { msg: `Applied ${donorData.compatibilities.length} vehicles!`, type: 'success' }}));
+      setRowStatus(s => ({...s, [listing.id]: { msg: `✓ ${donorData.compatibilities.length} vehicles applied!`, type: 'success' }}));
       setDonorInputs(d => ({...d, [listing.id]: ''}));
       load();
     } catch(e) {
       setRowStatus(s => ({...s, [listing.id]: { msg: e.message, type: 'error' }}));
     }
-  }
-
-  function applyMatch(listing, match) {
-    setDonorInputs(d => ({...d, [listing.id]: match.donor.url}));
   }
 
   function sorted(rows) {
@@ -206,7 +202,7 @@ export default function DashboardTab() {
         ) : rows.length === 0 ? (
           <div className="empty">
             <i className="ti ti-layout-dashboard" />
-            <p>No listings yet. Click "Sync from eBay" to load your listings, or add them manually via Bulk Upload.</p>
+            <p>No listings yet. Click "Sync from eBay" to load your listings, or add them via Bulk Upload.</p>
             <button className="btn btn-primary" onClick={syncFromEbay}><i className="ti ti-cloud-download" /> Sync from eBay</button>
           </div>
         ) : (
@@ -216,17 +212,21 @@ export default function DashboardTab() {
                 <tr>
                   <th style={{width:50}}></th>
                   <th>Listing</th>
-                  <th style={{width:100}}>Status</th>
+                  <th style={{width:90}}>Status</th>
                   <th style={{width:90}}>Fitment</th>
-                  <th>Donor URL / Smart match</th>
-                  <th style={{width:80}}></th>
+                  <th>Donor URL</th>
+                  <th style={{width:90}}></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map(listing => {
-                  const match = !listing.has_fitment ? getBestMatch(listing) : null;
+                  const match = getBestMatch(listing);
                   const status = rowStatus[listing.id];
-                  const donorVal = donorInputs[listing.id] || '';
+                  const donorVal = donorInputs[listing.id] !== undefined
+                    ? donorInputs[listing.id]
+                    : (listing.donor_url || '');
+                  const hasFitment = listing.has_fitment;
+
                   return (
                     <tr key={listing.id}>
                       <td>
@@ -246,7 +246,7 @@ export default function DashboardTab() {
                             <div className="title-sub">
                               {listing.sku && <span>SKU: {listing.sku} · </span>}
                               {listing.ebay_item_id && <span>#{listing.ebay_item_id}</span>}
-                              {listing.profile_name && <span> · {listing.profile_name}</span>}
+                              {listing.profile_name && <span> · <i className="ti ti-database" style={{fontSize:10}} /> {listing.profile_name}</span>}
                             </div>
                           </div>
                         </div>
@@ -257,53 +257,60 @@ export default function DashboardTab() {
                         </span>
                       </td>
                       <td>
-                        {listing.has_fitment
+                        {hasFitment
                           ? <span className="badge badge-green"><i className="ti ti-check" /> Yes</span>
                           : <span className="badge badge-red"><i className="ti ti-x" /> Missing</span>
                         }
                       </td>
                       <td>
-                        {listing.has_fitment ? (
-                          <div style={{fontSize:12,color:'var(--text3)'}}>
-                            {listing.donor_url
-                              ? <a href={listing.donor_url} target="_blank" rel="noreferrer" style={{color:'var(--blue)'}}>View donor ↗</a>
-                              : 'Fitment applied'
-                            }
-                          </div>
-                        ) : (
-                          <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                            {match && !donorVal && (
-                              <div className="match-pill" onClick={() => applyMatch(listing, match)} title={match.donor.url}>
-                                <i className="ti ti-sparkles" style={{fontSize:11}} />
-                                {match.score}% match: {match.donor.title?.substring(0,30) || 'donor'}...
-                              </div>
-                            )}
-                            <div className="donor-cell">
-                              <input
-                                className="input"
-                                style={{fontSize:12,padding:'5px 9px'}}
-                                value={donorVal}
-                                onChange={e => setDonorInputs(d => ({...d, [listing.id]: e.target.value}))}
-                                placeholder="Paste donor eBay URL..."
-                              />
-                              <button
-                                className="btn btn-success btn-sm"
-                                disabled={!donorVal}
-                                onClick={() => applyDonor(listing, donorVal)}
-                              >
-                                <i className="ti ti-check" /> Apply
-                              </button>
+                        <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                          {match && !donorVal && (
+                            <div
+                              className="match-pill"
+                              onClick={() => setDonorInputs(d => ({...d, [listing.id]: match.donor.url}))}
+                              title={match.donor.url}
+                            >
+                              <i className="ti ti-sparkles" style={{fontSize:11}} />
+                              {match.score}% match: {(match.donor.title||'donor').substring(0,28)}...
                             </div>
-                            {status && <div className={`status ${status.type}`} style={{fontSize:11,marginTop:0}}>{status.msg}</div>}
+                          )}
+                          <div style={{display:'flex',alignItems:'center',gap:6}}>
+                            <input
+                              className="input"
+                              style={{
+                                fontSize:12,
+                                padding:'5px 9px',
+                                borderColor: !hasFitment && !donorVal ? 'var(--red)' : 'var(--border)',
+                                flex:1
+                              }}
+                              value={donorVal}
+                              onChange={e => setDonorInputs(d => ({...d, [listing.id]: e.target.value}))}
+                              placeholder={hasFitment ? "Paste donor URL to update fitment..." : "Paste donor eBay URL to apply fitment..."}
+                            />
                           </div>
-                        )}
+                          {status && (
+                            <div className={`status ${status.type}`} style={{fontSize:11,marginTop:0}}>
+                              {status.msg}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td>
-                        {listing.ebay_item_id && (
-                          <a href={listing.url} target="_blank" rel="noreferrer" className="btn btn-sm">
-                            <i className="ti ti-external-link" />
-                          </a>
-                        )}
+                        <div style={{display:'flex',flexDirection:'column',gap:4,alignItems:'flex-start'}}>
+                          <button
+                            className={`btn btn-sm ${hasFitment ? '' : 'btn-success'}`}
+                            disabled={!donorVal}
+                            onClick={() => applyDonor(listing, donorVal)}
+                          >
+                            <i className={`ti ${hasFitment ? 'ti-refresh' : 'ti-check'}`} />
+                            {hasFitment ? 'Update' : 'Apply'}
+                          </button>
+                          {listing.ebay_item_id && (
+                            <a href={listing.url} target="_blank" rel="noreferrer" className="btn btn-sm">
+                              <i className="ti ti-external-link" />
+                            </a>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
